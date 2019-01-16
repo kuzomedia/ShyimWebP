@@ -1,15 +1,15 @@
 <?php
 
-namespace ShyimWebP\Subscriber;
+namespace FroshWebP\Subscriber;
 
 use Enlight\Event\SubscriberInterface;
 use Enlight_Event_EventArgs;
+use FroshWebP\Services\WebpEncoderFactory;
 use Shopware\Bundle\MediaBundle\MediaServiceInterface;
 use Shopware\Models\Media\Media;
 
 /**
  * Class MediaUploadSubscriber
- * @package ShyimWebP\Subscriber
  */
 class MediaUploadSubscriber implements SubscriberInterface
 {
@@ -19,44 +19,56 @@ class MediaUploadSubscriber implements SubscriberInterface
     private $mediaService;
 
     /**
+     * @var WebpEncoderFactory
+     */
+    private $encoderFactory;
+    /**
+     * @var array
+     */
+    private $config;
+
+    /**
+     * MediaUploadSubscriber constructor.
+     *
+     * @param MediaServiceInterface $mediaService
+     * @param WebpEncoderFactory    $encoderFactory
+     * @param array                 $config
+     */
+    public function __construct(MediaServiceInterface $mediaService, WebpEncoderFactory $encoderFactory, array $config)
+    {
+        $this->mediaService = $mediaService;
+        $this->encoderFactory = $encoderFactory;
+        $this->config = $config;
+    }
+
+    /**
      * @return array
      */
     public static function getSubscribedEvents()
     {
         return [
-            'Shopware\Models\Media\Media::postPersist' => 'onFileUploaded'
+            'Shopware\Models\Media\Media::postPersist' => 'onFileUploaded',
         ];
     }
 
     /**
-     * MediaUploadSubscriber constructor.
-     * @param MediaServiceInterface $mediaService
-     */
-    public function __construct(MediaServiceInterface $mediaService)
-    {
-        $this->mediaService = $mediaService;
-    }
-
-    /**
-     * @param Enlight_Event_EventArgs  $args
+     * @param Enlight_Event_EventArgs $args
      */
     public function onFileUploaded(Enlight_Event_EventArgs $args)
     {
-        /** @var \Shopware\Models\Media\Media $media */
-        $media = $args->get('entity');
+        $runnableEncoders = WebpEncoderFactory::onlyRunnable($this->encoderFactory->getEncoders());
 
-        $webpPath = str_replace($media->getExtension(), 'webp', $media->getPath());
-        $im = imagecreatefromstring($this->mediaService->read($media->getPath()));
+        if (($encoder = current($runnableEncoders)) !== false) {
+            /** @var \Shopware\Models\Media\Media $media */
+            $media = $args->get('entity');
 
-        ob_start();
+            $webpPath = str_replace($media->getExtension(), 'webp', $media->getPath());
+            $im = imagecreatefromstring($this->mediaService->read($media->getPath()));
+            imagepalettetotruecolor($im);
+            $content = $encoder->encode($im, $this->config['webPQuality']);
+            imagedestroy($im);
 
-        imagepalettetotruecolor($im);
-        imagewebp($im, null, 80);
-
-        $content = ob_get_contents();
-        ob_end_clean();
-        imagedestroy($im);
-
-        $this->mediaService->write($webpPath, $content);
+            $this->mediaService->write($webpPath, $content);
+        }
     }
 }

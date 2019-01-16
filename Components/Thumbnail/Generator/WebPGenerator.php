@@ -1,8 +1,9 @@
 <?php
 
+namespace FroshWebP\Components\Thumbnail\Generator;
 
-namespace ShyimWebP\Components\Thumbnail\Generator;
-
+use FroshWebP\Components\WebpEncoderInterface;
+use FroshWebP\Services\WebpEncoderFactory;
 use Shopware\Bundle\MediaBundle\Exception\OptimizerNotFoundException;
 use Shopware\Bundle\MediaBundle\MediaServiceInterface;
 use Shopware\Bundle\MediaBundle\OptimizerServiceInterface;
@@ -25,16 +26,28 @@ class WebPGenerator implements GeneratorInterface
      */
     private $optimizerService;
 
+    /** @var WebpEncoderFactory */
+    private $webpEncoderFactory;
+
+    /** @var WebpEncoderInterface[] */
+    private $webpEncoders;
+
     /**
      * @param \Shopware_Components_Config $config
      * @param MediaServiceInterface       $mediaService
      * @param OptimizerServiceInterface   $optimizerService
+     * @param WebpEncoderFactory          $encoderFactory
      */
-    public function __construct(\Shopware_Components_Config $config, MediaServiceInterface $mediaService, OptimizerServiceInterface $optimizerService)
-    {
+    public function __construct(
+        \Shopware_Components_Config $config,
+        MediaServiceInterface $mediaService,
+        OptimizerServiceInterface $optimizerService,
+        WebpEncoderFactory $encoderFactory
+    ) {
         $this->fixGdImageBlur = $config->get('thumbnailNoiseFilter');
         $this->mediaService = $mediaService;
         $this->optimizerService = $optimizerService;
+        $this->webpEncoderFactory = $encoderFactory;
     }
 
     /**
@@ -76,9 +89,15 @@ class WebPGenerator implements GeneratorInterface
         $this->saveImage($destination, $newImage, $quality);
         $this->optimizeImage($destination);
 
-        $webpPath = str_replace($fileExt, 'webp', $destination);
-        $this->saveWebPImage($webpPath, $newImage, $quality);
-        $this->optimizeImage($webpPath);
+        if (is_null($this->webpEncoders)) {
+            $this->webpEncoders = WebpEncoderFactory::onlyRunnable($this->webpEncoderFactory->getEncoders());
+        }
+
+        if (!empty($this->webpEncoders)) {
+            $webpPath = str_replace($fileExt, 'webp', $destination);
+            $this->mediaService->write($webpPath, current($this->webpEncoders)->encode($newImage, $quality));
+            $this->optimizeImage($webpPath);
+        }
 
         // Removes both the original and the new created image from memory
         imagedestroy($newImage);
@@ -259,24 +278,6 @@ class WebPGenerator implements GeneratorInterface
                 imagejpeg($newImage, null, $quality);
                 break;
         }
-
-        $content = ob_get_contents();
-        ob_end_clean();
-
-        $this->mediaService->write($destination, $content);
-    }
-
-    /**
-     * @param string $destination
-     * @param $newImage
-     * @param int $quality
-     * @return void
-     */
-    private function saveWebPImage($destination, $newImage, $quality = 80)
-    {
-        ob_start();
-
-        imagewebp($newImage, null, $quality);
 
         $content = ob_get_contents();
         ob_end_clean();
